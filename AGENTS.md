@@ -15,6 +15,15 @@ Reading goes through `opensnitch-rulectl dump`, which one sudoers line allows
 without a password. Writing goes through `sudo -A`, so the user confirms every
 change to the firewall.
 
+## Installing it
+
+```
+sudo -A bash install.sh
+```
+
+Installs the root helper, the sudoers line, and rules for Telegram and Claude
+Code, whose paths change on every start or update.
+
 ## Running it
 
 ```
