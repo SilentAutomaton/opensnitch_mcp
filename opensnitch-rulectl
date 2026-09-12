@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+# Root helper for the opensnitch_mcp server: reads the daemon configuration and
+# installs rules. Runs under sudo, so it stays a single file and imports nothing
+# from the project directory, which the invoking user can write.
+
+import json
+import os
+import re
+import sys
+import tempfile
+from datetime import datetime, timezone
+
+RULES_DIR = "/etc/opensnitchd/rules"
+DAEMON_CONFIG = "/etc/opensnitchd/default-config.json"
+
+NAME_RE = re.compile(r"^[a-z0-9._-]{1,120}$")
+ACTIONS = {"allow", "deny", "reject"}
+DURATIONS = {"once", "30s", "5m", "15m", "30m", "1h", "12h", "until restart", "always"}
+OPERATOR_TYPES = {"simple", "regexp", "network", "list", "lists"}
+OPERANDS = {
+    "process.id", "process.path", "process.command",
+    "process.hash.md5", "process.hash.sha1",
+    "user.id", "iface.out", "iface.in",
+    "source.ip", "source.port", "source.network",
+    "dest.ip", "dest.host", "dest.port", "dest.network",
+    "protocol",
+    "lists.domains", "lists.domains_regexp", "lists.ips", "lists.nets",
+}
+
+
+def fail(message: str) -> None:
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def dump() -> None:
+    config = {}
+    try:
+        with open(DAEMON_CONFIG) as handle:
+            config = json.load(handle)
+    except (OSError, ValueError):
+        pass
+    rules = []
+    for name in sorted(os.listdir(RULES_DIR)):
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(RULES_DIR, name)) as handle:
+                rule = json.load(handle)
+        except (OSError, ValueError):
+            continue
+        rule["file"] = name
+        rules.append(rule)
+    json.dump({"config": config, "rules": rules}, sys.stdout)
+    sys.stdout.write("\n")
+
+
+def check_operator(operator: object, depth: int = 0) -> None:
+    if not isinstance(operator, dict):
+        fail("operator must be an object")
+    if depth > 1:
+        fail("operator lists cannot be nested more than one level")
+    kind = operator.get("type")
+    operand = operator.get("operand")
+    data = operator.get("data")
+    if kind not in OPERATOR_TYPES:
+        fail(f"unknown operator type: {kind!r}")
+    if operand not in OPERANDS and not str(operand).startswith("process.env."):
+        fail(f"unknown operand: {operand!r}")
+    if not isinstance(data, str):
+        fail("operator data must be a string")
+    if kind == "regexp":
+        try:
+            re.compile(data)
+        except re.error as error:
+            fail(f"operator data is not a valid regular expression: {error}")
+    for sub in operator.get("list") or []:
+        check_operator(sub, depth + 1)
+
+
+def check_rule(rule: object) -> dict:
+    if not isinstance(rule, dict):
+        fail("rule must be a JSON object")
+    name = rule.get("name")
+    if not isinstance(name, str) or not NAME_RE.match(name):
+        fail("rule name must match [a-z0-9._-] and be at most 120 characters")
+    if rule.get("action") not in ACTIONS:
+        fail(f"action must be one of {sorted(ACTIONS)}")
+    if rule.get("duration") not in DURATIONS:
+        fail(f"duration must be one of {sorted(DURATIONS)}")
+    check_operator(rule.get("operator"))
+    return rule
+
+
+def add(source: str, force: bool) -> None:
+    try:
+        with open(source) as handle:
+            rule = json.load(handle)
+    except OSError:
+        fail("cannot read the rule file")
+    except ValueError:
+        fail("the rule file is not valid JSON")
+    rule = check_rule(rule)
+    target = os.path.join(RULES_DIR, rule["name"] + ".json")
+    if os.path.exists(target) and not force:
+        fail(f"{target} already exists; pass --force to replace it")
+
+    now = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    rule.setdefault("created", now)
+    rule["updated"] = now
+    rule.setdefault("description", "")
+    rule.setdefault("enabled", True)
+    rule.setdefault("precedence", False)
+    rule.setdefault("nolog", False)
+    rule["operator"].setdefault("list", [])
+    rule["operator"].setdefault("sensitive", False)
+    rule.pop("file", None)
+
+    handle, temp = tempfile.mkstemp(dir=RULES_DIR, suffix=".tmp")
+    with os.fdopen(handle, "w") as out:
+        json.dump(rule, out, indent=2)
+        out.write("\n")
+    os.chmod(temp, 0o600)
+    os.chown(temp, 0, 0)
+    os.replace(temp, target)
+    print(target)
+
+
+def main() -> None:
+    argv = sys.argv[1:]
+    if argv[:1] == ["dump"] and len(argv) == 1:
+        dump()
+        return
+    if argv[:1] == ["add"]:
+        rest = [a for a in argv[1:] if a != "--force"]
+        if len(rest) != 1:
+            fail("usage: opensnitch-rulectl add <file> [--force]")
+        add(rest[0], "--force" in argv[1:])
+        return
+    fail("usage: opensnitch-rulectl dump | opensnitch-rulectl add <file> [--force]")
+
+
+main()

@@ -1,0 +1,5 @@
+# Install as /etc/sudoers.d/opensnitch-rulectl, owner root:root, mode 0440.
+# Check it with: visudo -c
+# Only "dump" is password free. Installing a rule goes through sudo -A, so the
+# user confirms every change to the firewall.
+<user> ALL=(root) NOPASSWD: /usr/local/bin/opensnitch-rulectl dump
