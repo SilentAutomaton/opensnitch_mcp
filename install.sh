@@ -1,6 +1,6 @@
 #!/bin/bash
 # Installs the root helper, the sudoers line that lets the MCP server read the
-# rules, and two rules for programs whose path changes on every start.
+# rules, and the rules for programs whose path changes on every start.
 #
 #   sudo -A bash install.sh
 set -e
@@ -50,13 +50,37 @@ print(target)
 PY
 }
 
-write_rule allow-always-regexp-telegram-appimage \
-  '^/tmp/\.mount_telegr[a-z0-9]+/telegram$' \
-  'Telegram AppImage from am: the mount point changes on every start'
+# Programs installed with am: one directory per app under /opt, each with an
+# AM-updater script. am itself has none, so it drops out on its own.
+am_apps() {
+  for dir in /opt/*/; do
+    [ -f "$dir/AM-updater" ] || continue
+    basename "$dir"
+  done
+}
+
+AM_NAMES=$(am_apps | sort | paste -sd'|')
+if [ -n "$AM_NAMES" ]; then
+  # An AppImage mounts itself on /tmp/.mount_ plus the first six characters of
+  # its file name plus a random suffix.
+  AM_PREFIXES=$(am_apps | cut -c1-6 | sort -u | paste -sd'|')
+
+  write_rule allow-always-regexp-am-appimages \
+    "^/tmp/\\.mount_($AM_PREFIXES)[a-z0-9]+/.+\$" \
+    'AppImages installed with am: the mount point changes on every start'
+
+  write_rule allow-always-regexp-am-opt \
+    "^/opt/($AM_NAMES)/.+\$" \
+    'Programs installed with am that run straight from /opt'
+fi
 
 write_rule allow-always-regexp-claude-versions \
   "^$(printf '%s' "$USER_HOME" | sed 's/\./\\\\./g')/\\.local/share/claude/versions/[0-9a-z.]+\$" \
   'Claude Code: the path carries the version, which changes on every update'
+
+write_rule allow-always-regexp-ge-proton \
+  "^$(printf '%s' "$USER_HOME" | sed 's/\./\\\\./g')/\\.local/share/Steam/compatibilitytools\\.d/GE-Proton[0-9]+-[0-9]+/files/bin/(wine-preloader|wine64-preloader|wineserver)\$" \
+  'GE-Proton for Steam: the path carries the version, which changes on every update'
 
 echo
 ls -l /usr/local/bin/opensnitch-rulectl /etc/sudoers.d/opensnitch-rulectl
