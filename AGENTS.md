@@ -30,8 +30,7 @@ Code, whose paths change on every start or update.
 python3 server.py
 ```
 
-Claude Code starts it from `~/.config/claude/.claude.json` as the `opensnitch`
-MCP server.
+An MCP client, Claude Code for one, starts it as the `opensnitch` MCP server.
 
 ## Checking it
 
@@ -41,7 +40,7 @@ python3 test_server.py
 
 ## Code
 
-`~/.config/claude/templates/agents/codestyle.md`, the same standard at every
+[`codestyle.md`](codestyle.md), the same standard at every
 tier. This project has more than one module, so the modularity rules apply.
 
 `models.py` holds the contracts: the dataclasses that cross module boundaries
